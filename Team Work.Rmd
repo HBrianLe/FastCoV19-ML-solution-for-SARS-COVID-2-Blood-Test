@@ -1,0 +1,292 @@
+---
+title: "FastCoV19: Machine Learning solution for COVID 19 from Blood Test"
+author: "Huy Huynh, Nhi Le, Andy Tran, Brian Le"
+date: "10/17/2020"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(png)
+library(grid)
+img <- readPNG("Project_Title.png")
+ grid.raster(img)
+```
+
+```{r}
+#Install Packages
+#install.packages("ggthemes")
+#install.packages("viridis")
+#install.packages("e1071")
+#install.packages("png")
+#install.packages("grid")
+```
+
+# FastCoV19: Machine Learning solution for COVID 19 from Blood Test" #
+
+### Objectives ###
+
+This project is aim to  predict confirmed COVID-19 casess based on laboratory result from anual physical exams. 
+
+*We consider whether it be possible to predict the test result for COVID 19 (either positive or negative) based on the result of blood test?*
+
+### Data Set ###
+
+We retrieve the dataset from patients seen at the Hospital Israelita Albert Einstein in São Paulo, Brazil,who perform the COVID 19 test and additional laboratory tests.
+
+```{r}
+# load aux functions
+source("00-Funcs.R")
+
+#load input dataset
+library("readxl");
+data <- as.data.frame(read_excel("dataset.xlsx"), stringAsFactors=F)
+```
+
+This dataset has 109 variables, a Patient ID and one target outcome variable showing the result (positive/negative) of COVID 19.
+
+### Data Cleaning ###
+
+Data cleaning procedures consist of: Making variable names syntactically valid, Replacing column values that should be empty for NA, Convert string categorical values to factors, Convert the variable **Urine...pH** to integer.
+
+```{r}
+# make variable names syntactically valid
+names(data) <- make.names(names(data))
+data$Patient.ID <- NULL
+
+# Replace column values that should be empty for NA
+data[data=='Não Realizado'] <- NA
+data[data=='not_done'] <- NA
+data[data=='<1000'] <- 500
+
+data$Urine...Leukocytes <- as.integer(data$Urine...Leukocytes)
+data$Urine...pH <- as.integer(data$Urine...pH)
+
+# convert string values to factors
+ind <- sapply(data, is.character)
+data[ind] <- lapply(data[ind], factor)
+
+data$Lipase.dosage <- as.factor(data$Lipase.dosage)
+```
+
+The outcome variable **SARS.Cov.2.exam.result** is a binary by which we convert such that $SARS.Cov.2.exam.result = 1$ for being positive and $SARS.Cov.2.exam.result = 0$ for being negative with COVID 19.
+
+```{r}
+outcome.var<-"SARS.Cov.2.exam.result"
+data[, outcome.var] <- as.integer(data[, outcome.var]) - 1
+```
+
+However, there are too many missing data points (>= 95%); we decided to remove them along with poor sample. But we choose to keep negative samples that have at least 10 variables with data points available.
+
+```{r}
+data.deleted<-data
+data.size<-nrow(data)
+not.na.pct <- 0.05
+data <- delete.na(data, n = data.size * not.na.pct, is.row = FALSE)
+
+
+data.pos <- data[data$SARS.Cov.2.exam.result==1,]
+data.neg <-  data[data$SARS.Cov.2.exam.result==0,]
+
+### delete poor samples
+min.non.na.vars <- 10
+data.neg <- delete.na(data.neg, n = min.non.na.vars)
+
+data <- rbind(data.pos, data.neg)
+```
+
+Hence, We have removed a lot of variables showing as below:
+
+```{r}
+print(setdiff(names(data.deleted), names(data)))
+```
+
+And we keep the remaning variables for the prediction model: 
+
+```{r}
+print(names(data))
+```
+## Predictive Analysis ##
+
+### Model Training ###
+
+To predict the likelihood that a patient is infected with the COVID 19, we split the dataset randomly into training and testing tests in a train-to-test split ratio of 4/5. 
+
+```{r}
+library(caret)
+```
+
+```{r}
+set.seed(10^7)
+SPLIT.RATIO <- 4/5
+train.index <- createDataPartition(data$SARS.Cov.2.exam.result, p = SPLIT.RATIO , list = FALSE)
+train <- data[train.index,]
+test <- data[-train.index,]
+```
+
+We train a GBM-Gradient Boosting Machine- to produce a prediction model in the form of an ensemble of weak prediction models, typically decision treesmodel using the remaining dataset variables as predictors. By defining a relatively high bag fraction, this introduces randomnesses into the model fit and reduces overfitting.
+
+```{r}
+train.features <- setdiff(names(train), c(outcome.var, "Patient.ID"))
+myformula = as.formula(paste0(outcome.var," ~ ", paste0(train.features, collapse="+")))
+
+BAG.FRACTION <- 0.8
+library(gbm)
+gbm.model = gbm(myformula, data = train,
+                n.trees = 500 ,
+                bag.fraction = BAG.FRACTION,
+                verbose=FALSE)
+```
+
+### Model Interpretability ###
+
+The model Interpretability is evaluated by looking at the relative influence of the top 10 most important variables that are normalized and based on the number of times a variable is selected for tree splitting, weighted by the improvement to the model as a result of each split, and averaged over all trees.
+
+```{r}
+model.summary<-summary(gbm.model, cBars=10)
+print(model.summary[1:15,])
+```
+
+We also analyze the conditional probability plots of the top 5 most important variables below, where the x-axis represents the predictor and the y-axis represents the likelihood of infection . 
+
+```{r}
+lapply(as.character(model.summary$var[1:5]), plot.gbm, x=gbm.model)
+```
+
+We observe the following:
+
+ - Patients are more likely to test positive for COVID 19 when Rhinovirus.Enterovirus, Influenza.B or Inf.A.H1N1.2009 are not detected
+ 
+ - Patients with low Leukocytes or Platelets are more likely to test positive for COVID 19
+
+Age is widely discussed as a leading indicator of severe COVID-19 cases. Therefore, we analyze the correlationship between the variable *age_quantile* and the top 5 most important variables discussed previously.
+
+We observe that a patient's age quantile can increase the likelihood of COVID 19 infection regarding top 5 variables.
+
+```{r}
+library(viridis)
+```
+
+```{r}
+plot.gbm(gbm.model, i.var = c(as.character(model.summary$var[1]), 'Patient.age.quantile'),  main="Rhinovirus.Enterovirus")
+plot.gbm(gbm.model, i.var = c(as.character(model.summary$var[2]), 'Patient.age.quantile'),  main="Influenza.B")
+plot.gbm(gbm.model, i.var = c(as.character(model.summary$var[3]), 'Patient.age.quantile'),  main="Leukocytes")
+plot.gbm(gbm.model, i.var = c(as.character(model.summary$var[4]), 'Patient.age.quantile'),  main="Platelets") 
+plot.gbm(gbm.model, i.var = c(as.character(model.summary$var[5]), 'Patient.age.quantile'),  main="Inf.A.H1N1.2009")
+```
+
+### Prediction ###
+
+When we apply the trained model to the test dataset, the model turn out to perform very well with an AUC of 94%. However, the determination of model's specificity and sensitivity relies on the definition of a likelihood threshold to determine patients that will be considered as likely positive COVID-19 cases among suspected cases.  
+
+```{r}
+library(pROC)
+test.current.prediction <-predict(gbm.model, newdata = test, n.trees = 500,
+                                   type="response")
+
+x.roc<-roc(response=test$SARS.Cov.2.exam.result, predictor=test.current.prediction)
+```
+
+```{r}
+plot(x.roc, ylim=c(0,1),
+     main=paste('AUC:',round(x.roc$auc[[1]],2)))
+abline(h=1,col='blue',lwd=2)
+abline(h=0,col='red',lwd=2)
+```
+
+A model with high sensitivity achieves good results in finding positive patients among those true positive patients. However, the number of patients predicted to be positive can be too high and impact the model's specificity. 
+
+Moreover, the hospital may not have enough resources to apply the necessary procedures for all patients assigned with a positive label if that number is too high. Hence, an ideal model is one that is well-balanced, i.e., one that has high sensitivity but it does not over-assign patients with positive labels.
+
+```{r}
+train.current.prediction <-predict(gbm.model, newdata = train, n.trees = 500,
+                             type="response")
+x.roc<-roc(response=train$SARS.Cov.2.exam.result, predictor=train.current.prediction)
+
+cc <- coords(x.roc, seq(from = 0, to = 1, by = 0.05), ret=c("sensitivity", "specificity", "threshold"), transpose = FALSE)
+
+library(ggplot2)
+library(ggthemes)
+mid<-median(cc$threshold)
+```
+
+```{r}
+ggplot(cc, aes(x=specificity, y=sensitivity,
+               color=threshold, 
+               fill=threshold)) + geom_point(size = 5) + geom_line() +
+  theme_bw() +
+  scale_color_gradient2(midpoint=mid, low="blue", mid="white", high="red", space ="Lab" ) +
+  scale_fill_gradient2(midpoint=mid, low="blue", mid="white", high="red", space ="Lab" )
+```
+
+
+#### Scenario 1: High availability of resources
+
+In Scenario 1, Let say that the hospital prepare enough resources. In that way, the model can be relaxed and over-estimate the number of positive cases. Hence, our objective function is one that maximizes sensitivity.
+
+We use the train data to select the threshold that maximizes model's sensitivity. We then apply this threshold in the predicted probabilities in the test set. The procedure returns a probability threshold of 5.8% and the model presents a high sensitivity value of 98%, as intended.
+
+However, the high recall comes at the cost of specificity, which presents a low value of 21%. Moreover, about 79% of the patients from the test set were labeled as positive, hence the model has limited usage as a prioritization tool.
+
+
+```{r}
+library(pROC)
+train.current.prediction <-predict(gbm.model, newdata = train, n.trees = 500,
+                             type="response")
+                             
+
+best.th<-coords(roc=x.roc, x=1, input="sensitivity", transpose = FALSE)$threshold
+print(paste0("Optimal threshold = ", best.th))
+
+oos.current.prediction <-predict(gbm.model, newdata = test, n.trees = 500,
+                                   type="response")
+
+print(paste0("Pct patients predicted as infected = ", sum(oos.current.prediction > best.th) / length(oos.current.prediction)))
+
+oos.x.roc<-roc(test$SARS.Cov.2.exam.result, predictor=oos.current.prediction)
+
+BinModelPerformance(oos.current.prediction, best.th, test$SARS.Cov.2.exam.result)
+```
+
+#### Scenario 2: Limited resources
+
+In Scenario 2, we assume an environment with limited resources and hence a reduction in model's sensitivity is acceptable if we can obtain a well-balanced model, overall. For that purpose, we choose as objective function one that maximizes the Youden J's statistic defined as $max(sensitivity + specificy)$.
+
+After making a prediction on the test set, we will then choose a threshold from the train set that maximizes the Youden J's statistic to achieve a well-balanced model. We observe that the model under Scenario 2 now delivers a Sensitivity of 82% compared to 98% from Scenario 1. However, it returns a Specificity of 97% while maintaining a high AUC of 94% (as the choice of threshold does not influence the AUC), hence delivering a more well-balanced model as expected. Moreover, now the model only assigns 28% of the test set with positive labels, showing to be useful as a potential patient prioritization tool.
+
+```{r}
+oos.current.prediction <-predict(gbm.model, newdata = test, n.trees = 500,
+                                 type="response")
+
+
+#obtain optimum threshold
+best.th<-coords(x.roc, "best", ret="threshold", transpose = FALSE, 
+                best.method="youden")$threshold
+print(paste0("Optimal threshold = ", best.th))
+
+print(paste0("Pct patients predicted as infected = ", 
+             sum(oos.current.prediction > best.th) / length(oos.current.prediction)))
+
+BinModelPerformance(oos.current.prediction, best.th,  test$SARS.Cov.2.exam.result)
+
+oos.x.roc<-roc(test$SARS.Cov.2.exam.result, predictor=oos.current.prediction)
+
+# OUT-OF-SAMPLE ROC
+plot(oos.x.roc, ylim=c(0,1), print.thres="best", print.thres.best.method="youden",
+     main=paste('AUC:',round(oos.x.roc$auc[[1]],2)))
+abline(h=1,col='blue',lwd=2)
+abline(h=0,col='red',lwd=2)
+```
+
+### Conclusion ###
+
+The model's output can be used as a tool for prioritization and to support further medical decision making processes.  The model has high interpretability further showing that patients admitted with COVID-19 symptoms who tested negative for Rhinovirus Enterovirus, Influenza B and Inf.A.H1N1.2009 and presented low levels of Leukocytes and Platelets were more likely to test positive for COVID 19.
+
+
