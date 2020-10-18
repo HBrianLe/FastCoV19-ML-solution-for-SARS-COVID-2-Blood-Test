@@ -10,3 +10,11 @@ physical exam, would it be possible to predict the test result for SARS-Cov-2 (p
 The dataset contains anonymized data from patients seen at the Hospital Israelita Albert Einstein in São
 Paulo, Brazil, and who had samples collected to perform the SARS-CoV-2 RT-PCR and additional laboratory
 tests during a visit to the hospital.
+## Data Preparation
+- Data cleaning procedures:
+1. Make variable names syntactically valid by removing special characters, spaces and symbols
+2. Convert strings that represent missing data to NA, namely the following values: ‘Não Realizado’ and
+‘not_done’
+3. Convert string categorical values to factors
+4. Convert the variable Urine. . . pH to numeric, as it contains a mix of string and numeric values in the
+input data
