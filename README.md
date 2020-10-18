@@ -1,5 +1,5 @@
-![FASTCoV19](https://github.com/andytrcs/FastCoV19/blob/main/Project_Title.png)
 # FastCoV19-ML-solution-for-SARS-COVID-2-Blood-Test
+![FASTCoV19](https://github.com/andytrcs/FastCoV19/blob/main/Project_Title.png)
 This work has the objective to predict confirmed COVID-19 cases among suspected cases based on commonly collected laboratory exams.
 ## Objectives
 This work has the objective to predict confirmed COVID-19 cases among suspected cases based on commonly
